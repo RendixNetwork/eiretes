@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1
+#
+# Local-development variant of eiretes/Dockerfile that installs the eirel
+# SDK from a sibling directory rather than PyPI. Used by
+# eirel-ai/docker-compose.validator.yml during pre-launch E2E smoke tests
+# when eirel hasn't shipped to PyPI yet.
+#
+# Build context must be the monorepo parent (the directory containing
+# both eirel/ and eiretes/).
+#
+# Once eirel is on PyPI, delete this file and use the main Dockerfile.
+
+FROM python:3.12-slim
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+COPY eirel /app/eirel
+COPY eiretes /app/eiretes
+
+RUN pip install --no-cache-dir /app/eirel \
+    && pip install --no-cache-dir /app/eiretes
+
+EXPOSE 8095
+CMD ["eiretes-judge-service"]
