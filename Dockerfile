@@ -1,14 +1,16 @@
 # syntax=docker/dockerfile:1
+#
+# Production image for the eiretes LLM judge service. Builds from this
+# repo's root; the eirel SDK is pulled from PyPI via pyproject.toml deps.
 
-FROM python:3.12-slim AS base
+FROM python:3.12-slim
 WORKDIR /app
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-COPY eiretes /app/eiretes
+COPY . /app/eiretes
 
-RUN pip install --no-cache-dir "eirel>=0.2.0,<1" \
-    && pip install --no-cache-dir /app/eiretes
+RUN pip install --no-cache-dir /app/eiretes
 
 EXPOSE 8095
 CMD ["eiretes-judge-service"]
