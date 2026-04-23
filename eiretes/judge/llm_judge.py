@@ -90,6 +90,12 @@ class LLMJudgeClient:
             if timeout_seconds is not None
             else float_env("EIREL_JUDGE_TIMEOUT_SECONDS", 30.0, minimum=0.1)
         )
+        # Reasoning models (Kimi-K2.5-TEE, deepseek-thinking, etc.) consume
+        # the entire output budget on internal reasoning tokens before
+        # producing the structured judge JSON, returning content=null /
+        # finish_reason="length". Default this to 4096 so reasoning models
+        # have headroom; override via env for very large rubrics.
+        self.max_tokens = int(os.getenv("EIREL_JUDGE_MAX_TOKENS", "4096"))
         self.transport = transport
         self.deterministic_fallback = deterministic_fallback
         self.ensemble_base_url = (
@@ -375,6 +381,7 @@ class LLMJudgeClient:
             ],
             "response_format": response_format,
             "temperature": 0.0,
+            "max_tokens": self.max_tokens,
         }
         headers = {
             "Content-Type": "application/json",
