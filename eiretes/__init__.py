@@ -2,14 +2,19 @@ from __future__ import annotations
 
 from eiretes.judge.catalog import RUBRIC_CATALOG, resolve_rubric_spec
 from eiretes.judge.llm_judge import LLMJudgeClient
-from eiretes.judge.rubrics.general_chat import GENERAL_CHAT_QUALITY_RUBRIC
-from eiretes.models import JudgeResult, ProviderJudgeResponse
+from eiretes.judge.rubrics.pairwise_general_chat import PAIRWISE_GENERAL_CHAT_RUBRIC
+from eiretes.models import (
+    VERDICT_SCORES,
+    AgreementJudgeResult,
+    ProviderAgreementResponse,
+)
 
 __all__ = [
-    "GENERAL_CHAT_QUALITY_RUBRIC",
-    "JudgeResult",
+    "PAIRWISE_GENERAL_CHAT_RUBRIC",
     "LLMJudgeClient",
-    "ProviderJudgeResponse",
+    "AgreementJudgeResult",
+    "ProviderAgreementResponse",
     "RUBRIC_CATALOG",
+    "VERDICT_SCORES",
     "resolve_rubric_spec",
 ]

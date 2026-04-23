@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from eiretes.judge.catalog import RUBRIC_CATALOG
 from eiretes.judge.llm_judge import LLMJudgeClient
-from eiretes.models import JudgeResult
+from eiretes.models import AgreementJudgeResult
 from eiretes.utils import float_env, int_env
 
 _logger = logging.getLogger(__name__)
@@ -19,17 +19,19 @@ _logger = logging.getLogger(__name__)
 # -- Request / Response models -----------
 
 _MAX_PROMPT_CHARS = 32_000
-_MAX_EXCERPT_CHARS = 200_000
+_MAX_RESPONSE_CHARS = 200_000
 
-ChatMode = Literal["instant", "thinking"]
+TaskMode = Literal["instant", "thinking"]
 
 
-class JudgeRequest(BaseModel):
+class AgreementJudgeRequest(BaseModel):
     family_id: str = Field(min_length=1, max_length=64)
     prompt: str = Field(max_length=_MAX_PROMPT_CHARS)
-    response_excerpt: str = Field(max_length=_MAX_EXCERPT_CHARS)
-    rubric_variant: str | None = Field(default=None, max_length=128)
-    mode: ChatMode = Field(default="instant")
+    response_a: str = Field(max_length=_MAX_RESPONSE_CHARS)
+    response_b: str = Field(max_length=_MAX_RESPONSE_CHARS)
+    task_mode: TaskMode | None = Field(default=None)
+    task_category: str | None = Field(default=None, max_length=64)
+    swap: bool = Field(default=False)
 
 
 # -- Application state -----------
@@ -40,18 +42,10 @@ _judge: LLMJudgeClient | None = None
 def _build_judge() -> LLMJudgeClient:
     return LLMJudgeClient(
         model=os.getenv("EIREL_JUDGE_MODEL", "local-rubric-judge"),
-        rubric_version=os.getenv("EIREL_JUDGE_RUBRIC_VERSION", "general_chat_rubric_v1"),
+        rubric_version=os.getenv("EIREL_JUDGE_RUBRIC_VERSION", "agreement_general_chat_v1"),
         base_url=os.getenv("EIREL_JUDGE_BASE_URL") or None,
         api_key=os.getenv("EIREL_JUDGE_API_KEY"),
         timeout_seconds=float_env("EIREL_JUDGE_TIMEOUT_SECONDS", 30.0, minimum=0.1),
-        ensemble_base_url=os.getenv("EIREL_ENSEMBLE_JUDGE_BASE_URL") or None,
-        ensemble_api_key=os.getenv("EIREL_ENSEMBLE_JUDGE_API_KEY") or None,
-        ensemble_timeout_seconds=float_env(
-            "EIREL_ENSEMBLE_JUDGE_TIMEOUT_SECONDS", 30.0, minimum=0.1
-        ),
-        ensemble_disagreement_threshold=float_env(
-            "EIREL_ENSEMBLE_JUDGE_DISAGREEMENT_THRESHOLD", 0.20, minimum=0.0, maximum=1.0
-        ),
     )
 
 
@@ -110,18 +104,14 @@ def catalog(
 ) -> dict[str, Any]:
     """Publish the rubric catalog so consumers don't hold a stale static snapshot.
 
-    Only the fields needed by eirel-ai's dispatcher are exposed — system prompts
-    and per-dimension rubric anchors stay server-side so miners can't mine them.
+    Only the fields needed by eirel-ai's dispatcher are exposed — the system
+    prompt stays server-side so miners can't mine it.
     """
     families: dict[str, Any] = {}
     for family_id, spec in RUBRIC_CATALOG.items():
-        supported_modes = sorted((spec.get("system_prompt_by_mode") or {}).keys())
         families[family_id] = {
             "rubric_name": spec.get("rubric_name"),
-            "judge_mode": spec.get("judge_mode"),
-            "judge_weight": spec.get("judge_weight"),
-            "dimensions": list(spec.get("dimensions") or []),
-            "supported_modes": supported_modes,
+            "verdicts": list(spec.get("verdicts") or []),
         }
     return {
         "rubric_version": judge_client.rubric_version,
@@ -130,18 +120,20 @@ def catalog(
     }
 
 
-@app.post("/v1/judge")
-async def judge(
-    req: JudgeRequest,
+@app.post("/v1/judge/agreement")
+async def judge_agreement(
+    req: AgreementJudgeRequest,
     judge_client: LLMJudgeClient = Depends(get_judge),
-) -> JudgeResult:
+) -> AgreementJudgeResult:
     _require_known_family(req.family_id)
-    return await judge_client.judge(
+    return await judge_client.judge_agreement(
         family_id=req.family_id,
         prompt=req.prompt,
-        response_excerpt=req.response_excerpt,
-        rubric_variant=req.rubric_variant,
-        mode=req.mode,
+        response_a=req.response_a,
+        response_b=req.response_b,
+        task_mode=req.task_mode,
+        task_category=req.task_category,
+        swap=req.swap,
     )
 
 
