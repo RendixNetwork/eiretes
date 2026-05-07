@@ -191,7 +191,7 @@ class PairwiseJudge:
         """
         if not (self.base_url and self.api_key):
             raise RuntimeError(
-                "PairwiseJudge requires EIREL_JUDGE_BASE_URL + EIREL_JUDGE_API_KEY"
+                "PairwiseJudge requires EIREL_EVAL_JUDGE_BASE_URL + EIREL_EVAL_JUDGE_API_KEY"
             )
         if len(bundle.answers) != 2:
             raise ValueError(

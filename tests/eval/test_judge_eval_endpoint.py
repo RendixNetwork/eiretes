@@ -34,8 +34,8 @@ def _stub_judge_handler(scripted: dict):
 
 
 def test_judge_eval_returns_outcome_for_correct_answer(monkeypatch):
-    monkeypatch.setenv("EIREL_JUDGE_BASE_URL", "http://judge.test")
-    monkeypatch.setenv("EIREL_JUDGE_API_KEY", "tok")
+    monkeypatch.setenv("EIREL_EVAL_JUDGE_BASE_URL", "http://judge.test")
+    monkeypatch.setenv("EIREL_EVAL_JUDGE_API_KEY", "tok")
 
     handler = _stub_judge_handler({
         "outcome": "correct",
@@ -74,8 +74,8 @@ def test_judge_eval_returns_outcome_for_correct_answer(monkeypatch):
 
 
 def test_judge_eval_handles_multi_turn_payload(monkeypatch):
-    monkeypatch.setenv("EIREL_JUDGE_BASE_URL", "http://judge.test")
-    monkeypatch.setenv("EIREL_JUDGE_API_KEY", "tok")
+    monkeypatch.setenv("EIREL_EVAL_JUDGE_BASE_URL", "http://judge.test")
+    monkeypatch.setenv("EIREL_EVAL_JUDGE_API_KEY", "tok")
 
     captured: dict = {}
 
@@ -133,8 +133,8 @@ def test_judge_eval_handles_multi_turn_payload(monkeypatch):
 def test_judge_eval_disputed_downgrades_for_deterministic(monkeypatch):
     """Disputed is only valid for three_oracle items; deterministic items
     where the candidate disagrees with the planted answer are wrong."""
-    monkeypatch.setenv("EIREL_JUDGE_BASE_URL", "http://judge.test")
-    monkeypatch.setenv("EIREL_JUDGE_API_KEY", "tok")
+    monkeypatch.setenv("EIREL_EVAL_JUDGE_BASE_URL", "http://judge.test")
+    monkeypatch.setenv("EIREL_EVAL_JUDGE_API_KEY", "tok")
 
     handler = _stub_judge_handler({"outcome": "disputed", "guidance": ""})
     transport = httpx.MockTransport(handler)

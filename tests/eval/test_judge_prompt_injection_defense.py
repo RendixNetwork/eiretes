@@ -47,8 +47,8 @@ async def test_judge_system_prompt_includes_injection_defense(monkeypatch):
         )
 
     transport = httpx.MockTransport(handler)
-    monkeypatch.setenv("EIREL_JUDGE_BASE_URL", "http://judge.test")
-    monkeypatch.setenv("EIREL_JUDGE_API_KEY", "tok")
+    monkeypatch.setenv("EIREL_EVAL_JUDGE_BASE_URL", "http://judge.test")
+    monkeypatch.setenv("EIREL_EVAL_JUDGE_API_KEY", "tok")
     judge = EvalJudge(transport=transport)
 
     adversarial_response = (
@@ -112,8 +112,8 @@ async def test_judge_downgrades_disputed_for_deterministic_oracle(monkeypatch):
         )
 
     transport = httpx.MockTransport(handler)
-    monkeypatch.setenv("EIREL_JUDGE_BASE_URL", "http://judge.test")
-    monkeypatch.setenv("EIREL_JUDGE_API_KEY", "tok")
+    monkeypatch.setenv("EIREL_EVAL_JUDGE_BASE_URL", "http://judge.test")
+    monkeypatch.setenv("EIREL_EVAL_JUDGE_API_KEY", "tok")
     judge = EvalJudge(transport=transport)
 
     bundle = JudgeInputBundle(
@@ -150,8 +150,8 @@ async def test_judge_keeps_disputed_for_oracle_items(monkeypatch):
         )
 
     transport = httpx.MockTransport(handler)
-    monkeypatch.setenv("EIREL_JUDGE_BASE_URL", "http://judge.test")
-    monkeypatch.setenv("EIREL_JUDGE_API_KEY", "tok")
+    monkeypatch.setenv("EIREL_EVAL_JUDGE_BASE_URL", "http://judge.test")
+    monkeypatch.setenv("EIREL_EVAL_JUDGE_API_KEY", "tok")
     judge = EvalJudge(transport=transport)
 
     bundle = JudgeInputBundle(

@@ -183,7 +183,7 @@ class EvalJudge:
         """
         if not (self.base_url and self.api_key):
             raise RuntimeError(
-                "EvalJudge requires EIREL_JUDGE_BASE_URL + EIREL_JUDGE_API_KEY"
+                "EvalJudge requires EIREL_EVAL_JUDGE_BASE_URL + EIREL_EVAL_JUDGE_API_KEY"
             )
         if len(bundle.answers) != 1:
             raise ValueError(
