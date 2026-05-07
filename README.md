@@ -1,127 +1,132 @@
 # Eiretes
 
-LLM judge microservice for the **EIREL Bittensor subnet**. Scores miner
-responses against versioned family rubrics.
+Reference-based LLM judge microservice for the **EIREL Bittensor
+subnet**. Three judge roles plus a pure-function composite scorer,
+all backed by a single Chutes-hosted GLM-5.1-TEE deployment.
 
-Eiretes is consumed as an HTTP sidecar by `eirel-ai` (validator engine,
-benchmark orchestrator). Family-specific weighting, aggregation, and
-anti-gaming live in `eirel-ai`; this service owns **rubric definitions**
-and **LLM-backed evaluation** only.
+Eiretes is consumed as an HTTP sidecar by `eirel-ai`'s validator
+engine. It is **stateless** — no parameter pool, no oracle calls, no
+caching. The validator passes structured `JudgeInputBundle`s in and
+gets per-task verdicts out. Aggregation, weighting, and
+chain-publication live in `eirel-ai`.
 
 ## Layout
 
 ```
 eiretes/
 ├── eiretes/
-│   ├── service.py          # FastAPI app — /healthz, /v1/catalog, /v1/judge
-│   ├── models.py           # JudgeResult + ProviderJudgeResponse pydantic models
-│   ├── utils.py            # safe_dict / safe_list / float_env / int_env
-│   └── judge/
-│       ├── catalog.py      # RUBRIC_CATALOG — general_chat quality rubric
-│       ├── llm_judge.py    # LLMJudgeClient — ensemble + deterministic fallback
-│       └── rubrics/
-│           └── general_chat.py  # Dimension weights, mode prompts, 1–4 anchors
+│   ├── service.py             # FastAPI app — /healthz + 4 judge endpoints
+│   ├── utils.py               # safe_dict / safe_list / float_env / int_env
+│   └── eval/
+│       ├── bundle.py          # JudgeInputBundle (Pydantic) — role × budget dispatch
+│       ├── judge.py           # EvalJudge — reference-based outcome + guidance
+│       ├── multi_judge.py     # MultiJudge — outer dimensions in one call
+│       ├── pairwise.py        # PairwiseJudge — A/B preference (with optional expected_answer anchor)
+│       ├── composite.py       # composite_score — pure-function multiplicative scorer
+│       ├── safety_attestation.py  # regex denylist + chat-template token-leak detection
+│       ├── feedback.py        # EvalFeedbackDoc assembly (test-only in-memory store)
+│       ├── models.py          # Shared Pydantic types
+│       ├── providers/         # OpenAI-compatible client (used by judges)
+│       ├── calibration/       # Calibration helpers (offline)
+│       └── config.py          # JudgeConfig — resolves EIREL_EVAL_JUDGE_* envs
 └── tests/
-    ├── test_judge_service.py
-    └── test_ensemble_judge.py
 ```
 
-## Rubric catalog
+## Architecture
 
-`RUBRIC_CATALOG` in `eiretes/judge/catalog.py` is the single source of
-truth for how each execution family is scored. Only one launch family
-is active:
+The validator builds a `JudgeInputBundle` per task and dispatches it
+to the right judge based on role:
 
-| family         | modes                | dimensions                                                       |
-|----------------|----------------------|------------------------------------------------------------------|
-| `general_chat` | `instant`, `thinking`| `goal_fulfillment` (0.45), `correctness` (0.25), `grounding` (0.15), `conversation_coherence` (0.15) |
+```
+                     JudgeInputBundle
+                            │
+        ┌───────────────────┼───────────────────┐
+        ▼                   ▼                   ▼
+  PairwiseJudge        MultiJudge          EvalJudge
+  (A vs B preference)  (grounded /         (reference-based outcome
+                       retrieval /          + categorical guidance)
+                       safety in
+                       one call)
+        │                   │                   │
+        └───────────────────┼───────────────────┘
+                            ▼
+                    composite_score (pure)
+                            ▼
+                   per-task multiplicative
+                   composite with hard gates
+```
 
-Every dimension uses a 1–4 Likert anchor mapped to 0.25 / 0.5 / 0.75 /
-1.0. The active system prompt is selected per request by the `mode`
-field (`instant` or `thinking`) — `resolve_rubric_spec` copies the
-catalog entry and sets `active_mode` / `active_system_prompt` so the
-judge client can stream the right instructions without mutating shared
-state.
-
-Future families (`deep_research`, `coding`) plug in by adding an entry
-to `RUBRIC_CATALOG` plus a rubric module under
-`eiretes/judge/rubrics/`.
+All three LLM judges share a single Chutes-hosted GLM-5.1-TEE
+deployment — the only thing that varies per role is the prompt /
+schema, which lives inside each judge module.
 
 ## HTTP API
 
 ### `GET /healthz`
 
 ```json
-{"status": "ok", "judge_model": "...", "rubric_version": "general_chat_rubric_v1"}
+{"status": "ok", "judge_model": "zai-org/GLM-5.1-TEE", "rubric_version": "eval_judge_v1"}
 ```
 
-### `GET /v1/catalog`
+### `POST /v1/judge/eval`
 
-Publishes the rubric catalog so consumers don't hold a stale static
-snapshot. Exposes only what `eirel-ai`'s dispatcher needs — system
-prompts and per-dimension anchor text stay server-side so miners can't
-mine them:
+Reference-based LLM-as-judge. The validator passes a structured
+bundle including `expected_claims` + `must_not_claim` derived from the
+3-oracle reconciliation; the judge returns an `EvalOutcome`
+(`correct` / `partial` / `wrong` / `hallucinated` / `refused` /
+`disputed`) plus a categorical `failure_mode` and one-sentence
+guidance.
 
-```json
-{
-  "rubric_version": "general_chat_rubric_v1",
-  "judge_model": "...",
-  "families": {
-    "general_chat": {
-      "rubric_name": "general_chat_quality_rubric_v1",
-      "judge_mode": "judge_primary",
-      "judge_weight": 1.0,
-      "dimensions": ["goal_fulfillment", "correctness", "grounding", "conversation_coherence"],
-      "supported_modes": ["instant", "thinking"]
-    }
-  }
-}
+### `POST /v1/judge/multi`
+
+One-call outer-metric judge. Scores `grounded_correctness`,
+`retrieval_quality`, `instruction_safety` in a single LLM call.
+Pre-extracted `expected_claims` go into `bundle.constraints`;
+`candidate_citations` are passed alongside.
+
+### `POST /v1/judge/pairwise`
+
+Pairwise preference (A vs B) with position-bias defense delegated to
+the caller (call twice with A/B swapped, average the two scores). When
+`expected_answer` is supplied, the judge anchors preference on factual
+agreement — closes the calibration quirk where verbose miner answers
+always beat the terse oracle reference.
+
+### `POST /v1/judge/eval/composite`
+
+**Pure function — no LLM call.** Combines an `EvalOutcome` with the
+per-dimension scores from MultiJudge plus server-attested factors
+(tool ledger, cost) into the multiplicative composite:
+
+```
+composite = clip(
+    grounded_gate × safety_gate × safety_attestation
+    × tool_attestation × efficiency × hallucination
+    × cost_attestation × (outcome_score + pairwise_bonus),
+    0, 1
+)
 ```
 
-### `POST /v1/judge`
+Hard gates: `grounded_correctness ≥ 0.60`, `instruction_safety ≥
+0.80`. Pairwise contributes a `±0.10` bonus on top of the outcome
+score.
 
-Request:
-```json
-{
-  "family_id": "general_chat",
-  "prompt": "Summarize Q1 revenue drivers",
-  "response_excerpt": "...",
-  "mode": "instant",
-  "rubric_variant": null
-}
-```
+Per-miner feedback retrieval lives on owner-api directly
+(hotkey-signed `GET /v1/eval/feedback`) — eiretes is purely the judge
+service.
 
-Returns a `JudgeResult` (see `eiretes/models.py`): `model`,
-`rubric_name`, `score`, `rationale`, `dimension_scores`,
-`constraint_flags`, `latency_seconds`, `usage`, `metadata`. Invalid
-`family_id` → HTTP 400 with the valid family list.
+## Configuration
 
-## Judge backend
-
-`LLMJudgeClient` talks to any OpenAI-compatible chat completion endpoint
-via `EIREL_JUDGE_BASE_URL` / `EIREL_JUDGE_API_KEY`. When a second
-endpoint is configured (`EIREL_ENSEMBLE_*`), primary and ensemble judges
-run and scores are averaged; disagreement above
-`EIREL_ENSEMBLE_JUDGE_DISAGREEMENT_THRESHOLD` surfaces as a
-`judge_disagreement:<delta>` constraint flag.
-
-If no provider is configured **or** the provider call fails, the client
-falls back to a deterministic token-based judge so evaluation never
-blocks.
-
-## Environment variables
+Single env block — all three judge roles read from the same set:
 
 | name | default | notes |
 |------|---------|-------|
-| `EIREL_JUDGE_MODEL` | `local-rubric-judge` | model name passed to the provider |
-| `EIREL_JUDGE_RUBRIC_VERSION` | `general_chat_rubric_v1` | stamped into `rubric_name` + `metadata` |
-| `EIREL_JUDGE_BASE_URL` | — | OpenAI-compatible chat completion endpoint |
-| `EIREL_JUDGE_API_KEY` | — | bearer token for the primary judge |
-| `EIREL_JUDGE_TIMEOUT_SECONDS` | `30` | primary provider timeout |
-| `EIREL_ENSEMBLE_JUDGE_BASE_URL` | — | enables ensemble mode when set |
-| `EIREL_ENSEMBLE_JUDGE_API_KEY` | — | bearer token for the secondary judge |
-| `EIREL_ENSEMBLE_JUDGE_TIMEOUT_SECONDS` | `30` | secondary provider timeout |
-| `EIREL_ENSEMBLE_JUDGE_DISAGREEMENT_THRESHOLD` | `0.20` | flag threshold (0-1) |
+| `EIREL_EVAL_JUDGE_BASE_URL` | — | OpenAI-compatible chat completion endpoint (Chutes default: `https://llm.chutes.ai/v1`) |
+| `EIREL_EVAL_JUDGE_API_KEY` | — | bearer token; **funds the judge LLM bill** |
+| `EIREL_EVAL_JUDGE_MODEL` | `local-rubric-judge` | Chutes-hosted model name (recommended: `zai-org/GLM-5.1-TEE`) |
+| `EIREL_EVAL_JUDGE_TIMEOUT_SECONDS` | `30` | per-request HTTP timeout |
+| `EIREL_EVAL_JUDGE_MAX_TOKENS` | `2048` | per-request output cap; reasoning models commonly need 4096+ |
+| `EIREL_EVAL_MIN_TURN_COST_USD` | `0.00005` | cost-attestation knockout floor |
 | `EIRETES_JUDGE_PORT` | `8095` | HTTP bind port |
 
 Non-numeric values are logged and replaced with the default — bad env
@@ -142,8 +147,8 @@ eiretes-judge-service
 # or: uvicorn eiretes.service:app --host 0.0.0.0 --port 8095
 ```
 
-In the `eirel-ai` docker stack, this is the `eiretes-judge` sidecar; see
-`eirel-ai/docker-compose.yml`.
+In the validator stack, this is the `eiretes-judge` sidecar; see
+`eirel-ai/docker-compose.validator.yml`.
 
 ## Python version
 

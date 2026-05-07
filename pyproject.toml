@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "eiretes"
 version = "0.1.1"
-description = "Pairwise LLM judge service for the EIREL subnet — compares agent responses against an OpenAI baseline."
+description = "Reference-based LLM judge service for the EIREL subnet — pairwise / multi-metric / outcome judges plus a multiplicative composite scorer."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
