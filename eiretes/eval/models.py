@@ -82,6 +82,11 @@ class EvalOutcome(BaseModel):
     outcome: Outcome
     failure_mode: FailureMode | None = None
     guidance: str = ""
+    # USD cost of the underlying Chutes call (computed by
+    # ``cost_calc.extract_chutes_chat_cost``). ``None`` when token
+    # counts weren't surfaced. Service handler copies this onto the
+    # HTTP response root so callers can track per-judgment spend.
+    cost_usd: float | None = None
 
 
 # -- Composite -------------------------------------------------------------

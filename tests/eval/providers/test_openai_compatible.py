@@ -46,7 +46,10 @@ def _ok_response(content: str | list) -> httpx.Response:
                     "finish_reason": "stop",
                 }
             ],
-            "usage": {"total_cost_usd": 0.001},
+            # Token-count usage shape — Chutes' real ``/chat/completions``
+            # response. Cost extraction multiplies by the rate card
+            # (``zai-org/GLM-5.1-TEE`` = $0.5 / $2 per Mtok).
+            "usage": {"prompt_tokens": 1000, "completion_tokens": 500},
         },
     )
 
@@ -79,7 +82,8 @@ async def test_complete_structured_returns_text_and_latency():
     assert isinstance(resp, ProviderResponse)
     assert json.loads(resp.text) == {"outcome": "correct", "guidance": ""}
     assert resp.latency_ms >= 0
-    assert resp.usage_usd == pytest.approx(0.001)
+    # 1000 * 0.5 / 1M + 500 * 2 / 1M = 0.0005 + 0.001 = 0.0015
+    assert resp.usage_usd == pytest.approx(0.0015)
     assert resp.finish_reason == "stop"
     assert captured["url"] == "http://chutes.test/chat/completions"
     body = captured["body"]

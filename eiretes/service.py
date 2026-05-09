@@ -83,6 +83,10 @@ class EvalJudgeResponse(BaseModel):
     outcome: Outcome
     failure_mode: FailureMode | None = None
     guidance: str = ""
+    # USD cost of the underlying Chutes call. ``None`` when token
+    # counts weren't surfaced (mocked transports / older models).
+    # Validator reads this to populate ``TaskMinerResult.judge_cost_usd``.
+    cost_usd: float | None = None
 
 
 @app.post("/v1/judge/eval", response_model=EvalJudgeResponse)
@@ -109,6 +113,7 @@ async def judge_eval(body: EvalJudgeRequest) -> EvalJudgeResponse:
         outcome=outcome.outcome,
         failure_mode=outcome.failure_mode,
         guidance=outcome.guidance,
+        cost_usd=outcome.cost_usd,
     )
 
 
@@ -138,6 +143,10 @@ class PairwiseJudgeResponse(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     reason: str = ""
     category_scores: dict[str, dict[str, int]] | None = None
+    # USD cost of the underlying Chutes call. ``None`` when token
+    # counts weren't surfaced. Validator reads this to populate
+    # ``TaskMinerResult.judge_cost_usd``.
+    cost_usd: float | None = None
 
 
 @app.post("/v1/judge/pairwise", response_model=PairwiseJudgeResponse)
@@ -169,6 +178,7 @@ async def judge_pairwise(body: PairwiseJudgeRequest) -> PairwiseJudgeResponse:
         confidence=verdict.confidence,
         reason=verdict.reason,
         category_scores=category_scores_payload,
+        cost_usd=verdict.cost_usd,
     )
 
 
@@ -198,6 +208,10 @@ class MultiJudgeResponse(BaseModel):
     grounded_correctness: MultiDimensionScore | None = None
     retrieval_quality: MultiDimensionScore | None = None
     instruction_safety: MultiDimensionScore | None = None
+    # USD cost of the underlying Chutes call. ``None`` when token
+    # counts weren't surfaced. Validator reads this to populate
+    # ``TaskMinerResult.judge_cost_usd``.
+    cost_usd: float | None = None
 
 
 @app.post("/v1/judge/multi", response_model=MultiJudgeResponse)
@@ -239,6 +253,7 @@ async def judge_multi(body: MultiJudgeRequest) -> MultiJudgeResponse:
             )
             if verdict.instruction_safety is not None else None
         ),
+        cost_usd=verdict.cost_usd,
     )
 
 

@@ -37,6 +37,7 @@ from eiretes.eval.models import (
     Outcome,
     OracleSource,
 )
+from eiretes.eval.providers.cost_calc import extract_chutes_chat_cost
 from eiretes.utils import float_env
 
 _logger = logging.getLogger(__name__)
@@ -48,6 +49,26 @@ _VALID_OUTCOMES: set[str] = {
 _VALID_FAILURE_MODES: set[str] = {
     "missing_tool_use", "wrong_fact", "missing_grounding", "off_topic",
     "incomplete", "over_refusal", "hallucinated_claim",
+}
+
+# Common drift the model produces when it confuses outcome vs.
+# failure_mode (observed in production: GLM-5.1-TEE returning
+# ``outcome="incomplete"`` when the rubric expected
+# ``outcome="partial", failure_mode="incomplete"``). Mapping
+# preserves the model's intent rather than discarding the call.
+# Keys are lowercased value the model emitted; values are
+# ``(canonical_outcome, inferred_failure_mode)``.
+_OUTCOME_DRIFT_ALIASES: dict[str, tuple[str, str | None]] = {
+    "incomplete": ("partial", "incomplete"),
+    "over_refusal": ("refused", "over_refusal"),
+    "hallucinated_claim": ("hallucinated", "hallucinated_claim"),
+    "missing_grounding": ("wrong", "missing_grounding"),
+    "wrong_fact": ("wrong", "wrong_fact"),
+    "off_topic": ("wrong", "off_topic"),
+    "missing_tool_use": ("wrong", "missing_tool_use"),
+    # Plain English variants the model sometimes emits.
+    "irrelevant": ("wrong", "off_topic"),
+    "missing": ("partial", "incomplete"),
 }
 
 
@@ -265,20 +286,42 @@ class EvalJudge:
             ) from exc
 
         outcome_str = raw.outcome.strip().lower()
-        if outcome_str not in _VALID_OUTCOMES:
-            raise ValueError(
-                f"eval judge returned unknown outcome {raw.outcome!r}; "
-                f"expected one of {sorted(_VALID_OUTCOMES)}"
-            )
+        # Failure mode comes off the structured response. Resolved
+        # below, but pre-loaded here so an aliased outcome (e.g. the
+        # model emitting "incomplete" as outcome) can default the
+        # failure_mode without overwriting an explicitly provided one.
         failure_mode: FailureMode | None = None
-        if raw.failure_mode:
-            fm = raw.failure_mode.strip().lower()
-            if fm and fm not in _VALID_FAILURE_MODES:
-                # Soft-fail: ignore unknown failure modes rather than raising,
-                # so a slightly drifty judge doesn't break the run.
-                failure_mode = None
-            elif fm:
-                failure_mode = fm  # type: ignore[assignment]
+        raw_failure_mode = (raw.failure_mode or "").strip().lower() or None
+
+        if outcome_str not in _VALID_OUTCOMES:
+            alias = _OUTCOME_DRIFT_ALIASES.get(outcome_str)
+            if alias is not None:
+                # Known drift: the model put a failure_mode value into
+                # outcome. Map to the canonical outcome and stamp the
+                # implied failure_mode (if the model didn't already set
+                # one of its own).
+                aliased_outcome, implied_fm = alias
+                _logger.info(
+                    "eval judge outcome alias: %r → %r (failure_mode=%r) "
+                    "(model=%s)",
+                    outcome_str, aliased_outcome, implied_fm, self.model,
+                )
+                outcome_str = aliased_outcome
+                if raw_failure_mode is None and implied_fm is not None:
+                    raw_failure_mode = implied_fm
+            else:
+                # Truly unknown outcome — soft-fail to ``wrong`` with
+                # a warning, matching the failure_mode soft-fail
+                # behaviour. A drifty judge shouldn't 500 the run.
+                _logger.warning(
+                    "eval judge returned unknown outcome %r; downgrading "
+                    "to 'wrong' (model=%s)",
+                    raw.outcome, self.model,
+                )
+                outcome_str = "wrong"
+
+        if raw_failure_mode and raw_failure_mode in _VALID_FAILURE_MODES:
+            failure_mode = raw_failure_mode  # type: ignore[assignment]
         # Disputed is only allowed for three_oracle items; downgrade
         # otherwise to ``wrong`` (the deterministic source IS the truth).
         if outcome_str == "disputed" and oracle_source != "three_oracle":
@@ -287,6 +330,7 @@ class EvalJudge:
             outcome=outcome_str,  # type: ignore[arg-type]
             failure_mode=failure_mode,
             guidance=(raw.guidance or "").strip()[:400],
+            cost_usd=extract_chutes_chat_cost(parsed, self.model),
         )
 
 

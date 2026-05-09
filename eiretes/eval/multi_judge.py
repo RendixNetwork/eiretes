@@ -31,6 +31,7 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from eiretes.eval.bundle import JudgeInputBundle
+from eiretes.eval.providers.cost_calc import extract_chutes_chat_cost
 from eiretes.utils import float_env
 
 _logger = logging.getLogger(__name__)
@@ -114,6 +115,11 @@ class MultiJudgeVerdict(BaseModel):
     grounded_correctness: _DimensionScore | None = None
     retrieval_quality: _DimensionScore | None = None
     instruction_safety: _DimensionScore | None = None
+    # USD cost of the underlying Chutes call. ``None`` when the
+    # upstream didn't surface token counts. Service handler copies
+    # this onto the HTTP response root so the validator can record
+    # per-judgment spend in ``TaskMinerResult.judge_cost_usd``.
+    cost_usd: float | None = None
 
 
 class MultiJudge:
@@ -255,4 +261,5 @@ class MultiJudge:
             raise ValueError(
                 f"multi judge returned invalid schema (model={self.model}): {exc}"
             ) from exc
+        verdict.cost_usd = extract_chutes_chat_cost(parsed, self.model)
         return verdict

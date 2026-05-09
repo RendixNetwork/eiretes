@@ -24,6 +24,7 @@ from typing import Any
 import httpx
 
 from eiretes.eval.config import JudgeConfig
+from eiretes.eval.providers.cost_calc import extract_chutes_chat_cost
 from eiretes.eval.providers.types import (
     ProviderError,
     ProviderResponse,
@@ -164,7 +165,14 @@ class OpenAICompatibleClient:
                     f"HTTP {response.status_code}: "
                     f"{(response.text or '')[:512]}"
                 )
-            return self._parse_response(response, latency_ms)
+            parsed = self._parse_response(response, latency_ms)
+            cost = parsed.usage_usd
+            cost_str = "?" if cost is None else f"${cost:.6f}"
+            _logger.info(
+                "judge_provider_call: model=%s latency_ms=%d cost_usd=%s",
+                self._cfg.model, latency_ms, cost_str,
+            )
+            return parsed
         raise ProviderError(  # pragma: no cover
             f"unreachable after {attempt} attempts; last_exc={last_exc!r}"
         )
@@ -204,12 +212,12 @@ class OpenAICompatibleClient:
             finish_reason=finish_reason,
         )
 
-    @staticmethod
-    def _extract_usage_usd(payload: dict[str, Any]) -> float | None:
-        usage = payload.get("usage")
-        if not isinstance(usage, dict):
-            return None
-        total_usd = usage.get("total_cost_usd")
-        if isinstance(total_usd, (int, float)):
-            return float(total_usd)
-        return None
+    def _extract_usage_usd(self, payload: dict[str, Any]) -> float | None:
+        """Compute exact USD cost for the call.
+
+        Eiretes only ever calls Chutes-hosted models via this client,
+        so the dispatch is unconditional. ``EIRETES_LLM_PRICING_JSON``
+        overrides the static rate table when ops need to pin a
+        per-model rate without a redeploy.
+        """
+        return extract_chutes_chat_cost(payload, self._cfg.model)

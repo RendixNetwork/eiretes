@@ -23,6 +23,7 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from eiretes.eval.bundle import JudgeInputBundle
+from eiretes.eval.providers.cost_calc import extract_chutes_chat_cost
 from eiretes.utils import float_env
 
 _logger = logging.getLogger(__name__)
@@ -127,6 +128,13 @@ class PairwiseVerdict(BaseModel):
     # eval-judge guidance fix.
     reason: str | None = None
     category_scores: PairwiseCategoryScores | None = None
+    # USD cost of the underlying Chutes call, computed by
+    # ``cost_calc.extract_chutes_chat_cost`` from the LLM response's
+    # ``usage`` block. ``None`` when the upstream didn't surface token
+    # counts (mocked transports / older models). Surfaced through the
+    # service response so the validator can record per-judgment spend
+    # in ``TaskMinerResult.judge_cost_usd``.
+    cost_usd: float | None = None
 
 
 class PairwiseJudge:
@@ -290,4 +298,5 @@ class PairwiseJudge:
             verdict.winner = "tie"
         else:
             verdict.winner = winner_str
+        verdict.cost_usd = extract_chutes_chat_cost(parsed, self.model)
         return verdict
